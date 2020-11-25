@@ -1,0 +1,149 @@
+import sublime
+
+from itertools import islice
+
+from .arglist import Arg
+from .arglist import Arglist
+from .arglist import arglist_tree
+from .common import iprepend
+from .sublime_util import ws_begin_before
+from .sublime_util import ws_end_after
+from .shared import Scope
+
+
+def is_open_paren(scope):
+    return sublime.score_selector(scope, Scope.open_paren) > 0
+
+
+def is_close_paren(scope):
+    return sublime.score_selector(scope, Scope.close_paren) > 0
+
+
+def is_comma(scope):
+    return sublime.score_selector(scope, Scope.comma) > 0
+
+
+def in_the_middle_of_arglist(view, pos):
+    return view.match_selector(pos, Scope.arglist)
+
+
+def is_arglist(scope):
+    return sublime.score_selector(scope, Scope.arglist) > 0
+
+
+def extract_token(view, pos):
+    [reg_scope] = view.extract_tokens_with_scopes(sublime.Region(pos))
+    return reg_scope
+
+
+def tokens_left(view, pos):
+    while pos > 0:
+        reg, scope = extract_token(view, pos - 1)
+        if not is_arglist(scope):
+            break
+        pos = reg.begin()
+        yield reg, scope
+
+
+def tokens_right(view, pos):
+    while pos < view.size():
+        reg, scope = extract_token(view, pos)
+        if not is_arglist(scope):
+            break
+        pos = reg.end()
+        yield reg, scope
+
+
+def parse_left(arglist, token_gtor):
+    stack = [arglist]
+    while True:
+        reg, scope = next(token_gtor)
+
+        if is_open_paren(scope):
+            arglist.open = reg.end()
+            stack.pop()
+            if stack:
+                arglist = stack[-1]
+            else:
+                break
+        elif is_close_paren(scope):
+            new = Arglist(close=reg.begin())
+            arglist.append_subarglist_left(new)
+            stack.append(new)
+            arglist = new
+        elif is_comma(scope):
+            arglist.append_comma_left(reg.begin())
+
+
+def parse_right(arglist, token_gtor):
+    stack = [arglist]
+    while True:
+        reg, scope = next(token_gtor)
+
+        if is_close_paren(scope):
+            arglist.close = reg.begin()
+            stack.pop()
+            if stack:
+                arglist = stack[-1]
+            else:
+                break
+        elif is_open_paren(scope):
+            new = Arglist(open=reg.end())
+            arglist.append_subarglist_right(new)
+            stack.append(new)
+            arglist = new
+        elif is_comma(scope):
+            arglist.append_comma_right(reg.begin())
+
+
+def explore_enclosing_arglists(view, pos):
+    if not (pos > 0 and pos < view.size() and
+            in_the_middle_of_arglist(view, pos - 1) and
+            in_the_middle_of_arglist(view, pos)):
+        return None
+
+    reg0, scope0 = extract_token(view, pos - 1)
+
+    gtor_left = iprepend((reg0, scope0), to=tokens_left(view, reg0.begin()))
+    gtor_right = tokens_right(view, reg0.end())
+
+    arglist = Arglist()
+
+    while True:
+        parse_left(arglist, gtor_left)
+        yield arglist
+        parse_right(arglist, gtor_right)
+        yield
+
+        new = Arglist()
+        new.append_subarglist_right(arglist)
+        arglist = new
+
+
+def finalize_arglist(view, arglist):
+    if not arglist.args:
+        begin = ws_end_after(view, arglist.open)
+        end = ws_begin_before(view, arglist.close)
+        if begin < end:
+            arglist.args.append(Arg(begin=begin, end=end))
+    else:
+        # open paren and first arg
+        arglist.args[0].begin = ws_end_after(view, arglist.open)
+        # now check all commas
+        for arg0, arg1 in zip(arglist.args, islice(arglist.args, 1, None)):
+            arg1.begin = ws_end_after(view, arg0.end + 1)
+        # last arg and closing paren
+        last_arg = arglist.args[-1]
+        if last_arg.followed_by_comma:
+            # We might need to add the last arg
+            begin = ws_end_after(view, last_arg.end + 1)
+            end = ws_begin_before(view, arglist.close)
+            if begin < end:
+                arglist.args.append(Arg(begin=begin, end=end))
+        else:
+            last_arg.set_end(ws_begin_before(view, arglist.close))
+
+
+def finalize_arglist_fulldepth(view, arglist):
+    for sub in arglist_tree(arglist):
+        finalize_arglist(view, sub)

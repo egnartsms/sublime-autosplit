@@ -1,0 +1,14 @@
+[
+    // {
+    //     "keys": ["alt+]"],
+    //     "command": "argformat_split"
+    // },
+    {
+        "keys": ["alt+["],
+        "command": "autosplit_join"
+    },
+    {
+        "keys": ["alt+]"],
+        "command": "autosplit_split"
+    }
+]
