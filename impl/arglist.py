@@ -1,5 +1,6 @@
 from collections import deque
 
+from .shared import view
 from .sublime_util import on_same_line
 
 
@@ -8,6 +9,16 @@ class Arglist:
         self.args = deque()
         self.open = open  # after opening paren
         self.close = close  # before closing paren
+
+    def __eq__(self, rhs):
+        return self._as_tuple == rhs._as_tuple
+    
+    def __hash__(self):
+        return hash(self._as_tuple)
+
+    @property
+    def _as_tuple(self):
+        return self.open, self.close
 
     @property
     def begin(self):
@@ -26,6 +37,13 @@ class Arglist:
             ', '.join(arg.visualize() for arg in self.args),
             self.close
         )
+
+    def is_pt_inside(self, pt):
+        return self.open <= pt <= self.close
+
+    @property
+    def is_multilined(self):
+        return not on_same_line(view, self.begin, self.end)
 
     def append_comma_left(self, comma):
         self.args.appendleft(Arg(comma=comma))
@@ -56,6 +74,9 @@ class Arg:
         self.followed_by_comma = comma is not None
         self.arglists = deque()
 
+    def is_pt_inside(self, pt):
+        return self.begin <= pt <= self.end
+
     def append_subarglist_left(self, subarglist):
         self.arglists.appendleft(subarglist)
 
@@ -82,13 +103,6 @@ class Arg:
         )
 
 
-def arglist_tree(arglist):
-    yield arglist
-    for arg in arglist.args:
-        for arglist in arg.arglists:
-            yield from arglist_tree(arglist)
-
-
 def adjust_arglist_posns(arglist, delta):
     arglist.open += delta
     arglist.close += delta
@@ -105,10 +119,6 @@ def adjust_arg_posns(arg, delta):
         adjust_arglist_posns(arglist, delta)
 
 
-def arglist_multiline(view, arglist):
-    return not on_same_line(view, arglist.begin, arglist.end)
-
-
 def arg_index_at(arglist, pos):
     for i, arg in enumerate(arglist.args):
         if arg.begin <= pos < arg.end:
@@ -117,10 +127,11 @@ def arg_index_at(arglist, pos):
         return None
 
 
-def arg_on_same_line_as_prec(view, arglist, i):
+def arg_on_same_line_as_prec(arglist, i):
     try:
         prec = arglist.args[i - 1]
     except IndexError:
         return False
 
+    print(prec.end, arglist.args[i].begin)
     return on_same_line(view, prec.end, arglist.args[i].begin)

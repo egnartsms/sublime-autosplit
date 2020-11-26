@@ -1,5 +1,4 @@
-class StopCommand(Exception):
-    pass
+from .common import Proxy
 
 
 class Scope:
@@ -7,3 +6,6 @@ class Scope:
     open_paren = 'punctuation.section.arguments.begin'
     close_paren = 'punctuation.section.arguments.end'
     comma = 'punctuation.separator.arguments'
+
+
+view = Proxy()

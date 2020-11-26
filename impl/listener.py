@@ -1,8 +1,12 @@
 import sublime_plugin
 
 from . import op
+from .common import proxy_set_to
+from .shared import view
+from .sublime_util import get_ruler
+from .sublime_util import if_not_called_for
+from .sublime_util import line_too_long
 from .sublime_util import redo_empty
-from .sublime_util import single_sel_pos
 
 
 __all__ = ['Listener']
@@ -21,13 +25,16 @@ class Listener(sublime_plugin.ViewEventListener):
         if cmd not in ('insert', 'paste'):
             return
 
-        self.view.run_command('autosplit_split_if_too_long')
-
-    def on_selection_modified(self):
-        self.view.erase_phantoms('autosplit:joinable')
-
-        pos = single_sel_pos(self.view)
-        if pos is None:
+        ruler = get_ruler(self.view)
+        if ruler is None:
             return
 
-        op.mark_if_joinable_at(self.view, pos)
+        if any(line_too_long(self.view, reg.b, ruler) for reg in self.view.sel()):
+            self.view.run_command('autosplit_split_if_too_long')
+
+    
+    @if_not_called_for(300)
+    def on_selection_modified(self):
+        with proxy_set_to(view, self.view):
+            view.erase_phantoms('autosplit:joinable')
+            op.mark_joinables_at([reg.b for reg in view.sel()])

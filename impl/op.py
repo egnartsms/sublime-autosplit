@@ -1,25 +1,29 @@
+import contextlib
+import functools
 import sublime
 
 from .arglist import adjust_arglist_posns
 from .arglist import arg_index_at
 from .arglist import arg_on_same_line_as_prec
-from .arglist import arglist_multiline
 from .common import consecutive_pairs
 from .common import tracking_first_last
 from .parse import explore_enclosing_arglists
-from .parse import finalize_arglist_fulldepth
+from .shared import view
 from .sublime_util import erase_ws_before
+from .sublime_util import get_ruler
 from .sublime_util import line_indentation
 from .sublime_util import line_ruler_pos
 from .sublime_util import line_too_long
 from .sublime_util import on_same_line
+from .sublime_util import relocating_posns
+from .sublime_util import relocating_regs
 from .sublime_util import retained_pos
-from .sublime_util import retained_regs
 from .sublime_util import ws_end_after
+from .sublime_util import register_view_dict
 
 
-def outermost_arglist_starting_on_same_line(view, pos):
-    xpl = explore_enclosing_arglists(view, pos)
+def outermost_starting_on_same_line(pos):
+    xpl = explore_enclosing_arglists(pos)
     enclosing, found = None, None
 
     try:
@@ -28,6 +32,8 @@ def outermost_arglist_starting_on_same_line(view, pos):
 
             if not on_same_line(view, enclosing.begin, pos):
                 if found is None:
+                    # If not found anything on this line, then we need the whole
+                    # 'enclosing' parsed, not just to the left paren
                     next(xpl)
                 break
 
@@ -37,13 +43,65 @@ def outermost_arglist_starting_on_same_line(view, pos):
     except StopIteration:
         enclosing = None
 
-    if found or enclosing:
-        finalize_arglist_fulldepth(view, found or enclosing)
-
     return enclosing, found
 
 
-def split_at(view, edit, pos):
+def enclosing_arglist_finder(fn):
+    change_count = dict()
+    memo = dict()
+
+    @functools.wraps(fn)
+    def wrapped(pos):
+        if change_count.get(view.id(), -1) < view.change_count():
+            # invalidate
+            memo[view.id()] = []
+            change_count[view.id()] = view.change_count()
+
+        retained = memo[view.id()]
+        for arglist in reversed(retained):
+            if arglist.is_pt_inside(pos):
+                # always keep most recently used at the end
+                retained.remove(arglist)
+                retained.append(arglist)
+                return arglist
+
+        arglist = fn(pos)
+        if arglist is not None:
+            retained.append(arglist)
+       
+        return arglist
+
+    return wrapped
+
+
+def innermost_enclosing_multilined(pos):
+    # if change_count.get(view.id(), -1) < view.change_count():
+    #     # invalidate
+    #     memo[view.id()] = []
+    #     change_count[view.id()] = view.change_count()
+
+    # retained = memo[view.id()]
+
+    xpl = explore_enclosing_arglists(pos)
+
+    while True:
+        try:
+            arglist = next(xpl)
+            next(xpl)
+        except StopIteration:
+            return None
+
+        if arglist.is_multilined:
+            break
+
+    return arglist
+
+
+def innermost_enclosing_multilined_multiple(posns):
+    return set(filter(None, (innermost_enclosing_multilined(pos) for pos in posns)))
+
+
+def split_at(pos, edit):
     """Find outermost arglist that starts on same line as pos and split it.
 
     If this arglist is itself a part of an enclosing arglist and it's not the first
@@ -60,76 +118,117 @@ def split_at(view, edit, pos):
     First 'inner_func_3' will be pushed to the next line, then its arguments will be split
     across 3 lines.
     """
-    enclosing, found = outermost_arglist_starting_on_same_line(view, pos)
+    enclosing, found = outermost_starting_on_same_line(pos)
 
     if found is None:
         if enclosing is not None:
-            split_arglist(view, edit, enclosing)
+            split_arglist(enclosing, edit)
         return
 
     if enclosing is not None:
         assert found in enclosing.args[-1].arglists
 
-        if arg_on_same_line_as_prec(view, enclosing, -1):
+        if arg_on_same_line_as_prec(enclosing, -1):
             arg_begin = ws_end_after(view, enclosing.args[-2].end_past_comma)
             with retained_pos(view, arg_begin) as get_arg_begin:
-                splitdown(view, edit, arg_begin, 0)
+                pushdown(edit, arg_begin)
                 delta = get_arg_begin() - arg_begin
 
             adjust_arglist_posns(found, delta)
 
-    split_arglist(view, edit, found)
+    split_arglist(found, edit)
 
 
-def split_line_if_too_long(view, edit, pt, ruler):
-    ruler_pos = line_ruler_pos(view, pt, ruler)
-    if ruler_pos is None:
+def split_lines_if_too_long(posns, edit, ruler):
+    ruler_posns = (line_ruler_pos(view, pos, ruler) for pos in posns)
+    ruler_posns = set(filter(None, ruler_posns))
+    if not ruler_posns:
         return
 
-    enclosing, found = outermost_arglist_starting_on_same_line(view, ruler_pos)
+    for ruler_pos in relocating_posns(view, ruler_posns):
+        enclosing, found = outermost_starting_on_same_line(ruler_pos)
 
-    if found is None:
-        if enclosing is None:
-            return
+        if found is None:
+            if enclosing is None:
+                continue
 
-        i = arg_index_at(enclosing, ruler_pos)
-        if arg_on_same_line_as_prec(view, enclosing, i):
-            # it still may surpass the ruler but that's all we can do
-            splitdown(view, edit, enclosing.args[i].begin)
+            i = arg_index_at(enclosing, ruler_pos)
+            if arg_on_same_line_as_prec(enclosing, i):
+                # it still may surpass the ruler but that's all we can do
+                pushdown(edit, enclosing.args[i].begin)
 
-        return
-    
-    if enclosing is not None:
-        assert found in enclosing.args[-1].arglists
+            continue
+        
+        if enclosing is not None:
+            assert found in enclosing.args[-1].arglists
 
-        if arg_on_same_line_as_prec(view, enclosing, -1):
-            arg_begin = ws_end_after(view, enclosing.args[-2].end_past_comma)
-            with retained_pos(view, arg_begin) as get_arg_begin:
-                splitdown(view, edit, arg_begin)
-                if line_too_long(view, get_arg_begin(), ruler):
-                    adjust_arglist_posns(found, delta=get_arg_begin() - arg_begin)
-                else:
-                    return
+            if arg_on_same_line_as_prec(enclosing, -1):
+                arg_begin = ws_end_after(view, enclosing.args[-2].end_past_comma)
+                with retained_pos(view, arg_begin) as get_arg_begin:
+                    pushdown(edit, arg_begin)
+                    if line_too_long(view, get_arg_begin(), ruler):
+                        adjust_arglist_posns(found, delta=get_arg_begin() - arg_begin)
+                    else:
+                        continue
 
-    split_arglist(view, edit, found)
+        split_arglist(found, edit)
 
 
-def split_arglist(view, edit, arglist):
+def split_arglist(arglist, edit):
     if not arglist.args:
         return
 
     ws_indent = view.settings().get('tab_size')
 
-    with retained_regs(view, space_regs(arglist)) as fregs:
-        for freg, isfirst, islast in tracking_first_last(fregs):
-            reg = freg()
+    regs = space_regs(arglist)
+    with fixing_up_past_last_arg_cursor(arglist):
+        for reg, (isfirst, islast) in zip(
+                relocating_regs(view, regs),
+                tracking_first_last(regs)
+        ):
             if on_same_line(view, reg.begin(), reg.end()):
-                splitdown(
-                    view,
+                pushdown(
                     edit,
                     reg.end(),
                     ws_indent if isfirst else -ws_indent if islast else 0
                 )
+
+
+@contextlib.contextmanager
+def fixing_up_past_last_arg_cursor(arglist):
+    """Fix the cursor standing after the last arg to be there after the arglist is split.
+
+    Without this hack, the cursor ends up before the closing paren of the arglist. This
+    happens because Sublime relocates empty cursors when insertion happens right at their
+    position (i.e. Sublime inserts before cursors).
+    """
+    if not arglist.args:
+        yield
+        return
+
+    last_arg = arglist.args[-1]
+
+    idx = None
+    sel = view.sel()
+
+    for i, cur in enumerate(sel):
+        if not cur.empty():
+            continue
+        if not arglist.is_pt_inside(cur.b):
+            continue
+        if cur.b >= last_arg.end_past_comma:
+            idx = i
+            break
+
+    if idx is None:
+        yield
+        return
+
+    del sel[idx]
+
+    with retained_pos(view, last_arg.end_past_comma - 1) as new_pos:
+        yield
+        sel.add(new_pos() + 1)
 
 
 def space_regs(arglist):
@@ -145,44 +244,29 @@ def space_regs(arglist):
         return [sublime.Region(arglist.open, arglist.close)]
 
 
-def splitdown(view, edit, pos, delta_indent=0):
+def pushdown(edit, pos, delta_indent=0):
     begin = erase_ws_before(view, edit, pos)
     nws = line_indentation(view, begin)
     view.insert(edit, begin, '\n' + ' ' * (nws + delta_indent))
 
 
-def join_at(view, edit, pos):
+def join_at(pos, edit):
     """Join the innermost arglist for which the begin and end are not on same line"""
-    arglist = innermost_enclosing_multilined(view, pos)
+    ruler = get_ruler(view)
+    if ruler is None:
+        return
+
+    arglist = innermost_enclosing_multilined(pos)
     if arglist is None:
         return
 
-    [ruler] = view.settings().get('rulers')
-    if not is_joinable(view, arglist, ruler):
+    if not is_joinable(arglist, ruler):
         return
 
-    join_arglist(view, edit, arglist)
+    join_arglist(arglist, edit)
 
 
-def innermost_enclosing_multilined(view, pos):
-    xpl = explore_enclosing_arglists(view, pos)
-
-    while True:
-        try:
-            arglist = next(xpl)
-            next(xpl)
-        except StopIteration:
-            return None
-
-        if arglist_multiline(view, arglist):
-            break
-
-    finalize_arglist_fulldepth(view, arglist)
-
-    return arglist
-
-
-def join_arglist(view, edit, arglist):
+def join_arglist(arglist, edit):
     replacements = list(reg_replacements_for_join(arglist))
     replacements.reverse()
 
@@ -191,10 +275,10 @@ def join_arglist(view, edit, arglist):
             view.replace(edit, reg, ' ' * nsp)
 
 
-def is_joinable(view, arglist, ruler):
+def is_joinable(arglist, ruler):
     row, col = view.rowcol(arglist.begin)
     can_occupy = essential_content_size(arglist) + 2     # for ( and )
-    return col + can_occupy < ruler
+    return col + can_occupy <= ruler
 
 
 def essential_content_size(arglist):
@@ -237,19 +321,20 @@ def reg_replacements_for_join(arglist):
     yield from in_arglist(arglist)
 
 
-def mark_if_joinable_at(view, pos):
-    rulers = view.settings().get('rulers')
-    if not rulers:
+def mark_joinables_at(posns):
+    ruler = get_ruler(view)
+    if ruler is None:
+        return
+   
+    arglists = innermost_enclosing_multilined_multiple(posns)
+    if not arglists:
         return
 
-    arglist = innermost_enclosing_multilined(view, pos)
-    if arglist is None:
-        return
-
-    if is_joinable(view, arglist, rulers[0]):
-        view.add_phantom(
-            'autosplit:joinable',
-            sublime.Region(arglist.begin),
-            '\u2191',
-            sublime.LAYOUT_INLINE
-        )
+    for arglist in arglists:
+        if is_joinable(arglist, ruler):
+            view.add_phantom(
+                'autosplit:joinable',
+                sublime.Region(arglist.open),
+                '\u2191',
+                sublime.LAYOUT_INLINE
+            )

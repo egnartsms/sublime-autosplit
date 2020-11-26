@@ -1,14 +1,14 @@
 import sublime
 
-from itertools import islice
-
 from .arglist import Arg
 from .arglist import Arglist
-from .arglist import arglist_tree
+from .common import consecutive_pairs
 from .common import iprepend
+from .shared import Scope
+from .shared import view
 from .sublime_util import ws_begin_before
 from .sublime_util import ws_end_after
-from .shared import Scope
+from .sublime_util import register_view_dict
 
 
 def is_open_paren(scope):
@@ -23,7 +23,7 @@ def is_comma(scope):
     return sublime.score_selector(scope, Scope.comma) > 0
 
 
-def in_the_middle_of_arglist(view, pos):
+def in_the_middle_of_arglist(pos):
     return view.match_selector(pos, Scope.arglist)
 
 
@@ -31,23 +31,30 @@ def is_arglist(scope):
     return sublime.score_selector(scope, Scope.arglist) > 0
 
 
-def extract_token(view, pos):
+# change_count = dict()
+# register_view_dict(change_count)
+
+# memo = dict()
+# register_view_dict(memo)
+
+
+def extract_token(pos):
     [reg_scope] = view.extract_tokens_with_scopes(sublime.Region(pos))
     return reg_scope
 
 
-def tokens_left(view, pos):
+def tokens_left(pos):
     while pos > 0:
-        reg, scope = extract_token(view, pos - 1)
+        reg, scope = extract_token(pos - 1)
         if not is_arglist(scope):
             break
         pos = reg.begin()
         yield reg, scope
 
 
-def tokens_right(view, pos):
+def tokens_right(pos):
     while pos < view.size():
-        reg, scope = extract_token(view, pos)
+        reg, scope = extract_token(pos)
         if not is_arglist(scope):
             break
         pos = reg.end()
@@ -62,7 +69,9 @@ def parse_left(arglist, token_gtor):
         if is_open_paren(scope):
             arglist.open = reg.end()
             stack.pop()
+
             if stack:
+                finalize(arglist)
                 arglist = stack[-1]
             else:
                 break
@@ -83,7 +92,9 @@ def parse_right(arglist, token_gtor):
         if is_close_paren(scope):
             arglist.close = reg.begin()
             stack.pop()
+
             if stack:
+                finalize(arglist)
                 arglist = stack[-1]
             else:
                 break
@@ -96,23 +107,25 @@ def parse_right(arglist, token_gtor):
             arglist.append_comma_right(reg.begin())
 
 
-def explore_enclosing_arglists(view, pos):
+def explore_enclosing_arglists(pos):
     if not (pos > 0 and pos < view.size() and
-            in_the_middle_of_arglist(view, pos - 1) and
-            in_the_middle_of_arglist(view, pos)):
+            in_the_middle_of_arglist(pos - 1) and
+            in_the_middle_of_arglist(pos)):
         return None
 
-    reg0, scope0 = extract_token(view, pos - 1)
+    reg0, scope0 = extract_token(pos - 1)
 
-    gtor_left = iprepend((reg0, scope0), to=tokens_left(view, reg0.begin()))
-    gtor_right = tokens_right(view, reg0.end())
+    gtor_left = iprepend((reg0, scope0), to=tokens_left(reg0.begin()))
+    gtor_right = tokens_right(reg0.end())
 
     arglist = Arglist()
 
     while True:
         parse_left(arglist, gtor_left)
+        fill_arg_beginnings(arglist)
         yield arglist
         parse_right(arglist, gtor_right)
+        finalize(arglist)
         yield
 
         new = Arglist()
@@ -120,30 +133,38 @@ def explore_enclosing_arglists(view, pos):
         arglist = new
 
 
-def finalize_arglist(view, arglist):
+def fill_arg_beginnings(arglist):
+    """Set arg.begin for all args found so far from the beginning of the arglist"""
+    if not arglist.args:
+        return
+
+    # open paren and first arg
+    if arglist.args[0].begin is None:
+        arglist.args[0].begin = ws_end_after(view, arglist.open)
+
+    # now check all commas
+    for arg0, arg1 in consecutive_pairs(arglist.args):
+        if arg1.begin is None:
+            arg1.begin = ws_end_after(view, arg0.end_past_comma)
+
+
+def finalize(arglist):
+    """Create final arg if needed, and set its .end property"""
     if not arglist.args:
         begin = ws_end_after(view, arglist.open)
         end = ws_begin_before(view, arglist.close)
         if begin < end:
             arglist.args.append(Arg(begin=begin, end=end))
     else:
-        # open paren and first arg
-        arglist.args[0].begin = ws_end_after(view, arglist.open)
-        # now check all commas
-        for arg0, arg1 in zip(arglist.args, islice(arglist.args, 1, None)):
-            arg1.begin = ws_end_after(view, arg0.end + 1)
+        fill_arg_beginnings(arglist)
+
         # last arg and closing paren
         last_arg = arglist.args[-1]
         if last_arg.followed_by_comma:
             # We might need to add the last arg
-            begin = ws_end_after(view, last_arg.end + 1)
+            begin = ws_end_after(view, last_arg.end_past_comma)
             end = ws_begin_before(view, arglist.close)
             if begin < end:
                 arglist.args.append(Arg(begin=begin, end=end))
         else:
             last_arg.set_end(ws_begin_before(view, arglist.close))
-
-
-def finalize_arglist_fulldepth(view, arglist):
-    for sub in arglist_tree(arglist):
-        finalize_arglist(view, sub)
