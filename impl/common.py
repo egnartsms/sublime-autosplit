@@ -3,19 +3,6 @@ from contextlib import contextmanager
 from itertools import islice
 
 
-class Loose:
-    def __init__(self, **attrs):
-        self.__dict__.update(attrs)
-
-
-def find_first_idx(it, pred):
-    for i, item in enumerate(it):
-        if pred(item):
-            return i
-    else:
-        return None
-
-
 def consecutive_pairs(itbl):
     return zip(itbl, islice(itbl, 1, None))
 

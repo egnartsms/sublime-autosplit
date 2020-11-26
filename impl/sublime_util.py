@@ -45,21 +45,6 @@ def on_same_line(view, pos1, pos2):
     return row1 == row2
 
 
-def pos_on_row(view, pos, row):
-    pos_row, pos_col = view.rowcol(pos)
-    return pos_row == row
-
-
-def single_sel_pos(view):
-    if len(view.sel()) != 1:
-        return None
-    reg = view.sel()[0]
-    if not reg.empty():
-        return None
-
-    return reg.a
-
-
 keypool = set()
 keycounter = 0
 
@@ -77,6 +62,22 @@ def key_acquire():
 def key_release(k):
     assert k not in keypool
     keypool.add(k)
+
+
+def add_hidden_regions(view, key, reglist):
+    view.add_regions(string_key(key), reglist, '', '', sublime.HIDDEN)
+
+
+def get_hidden_regions(view, key):
+    return view.get_regions(string_key(key))
+
+
+def erase_hidden_regions(view, key):
+    view.erase_regions(string_key(key))
+
+
+def string_key(key):
+    return 'argformat: {}'.format(key)
 
 
 @contextmanager
@@ -116,22 +117,6 @@ def relocating_regs(view, regs):
             yield getregs()[i]
 
 
-def add_hidden_regions(view, key, reglist):
-    view.add_regions(string_key(key), reglist, '', '', sublime.HIDDEN)
-
-
-def get_hidden_regions(view, key):
-    return view.get_regions(string_key(key))
-
-
-def erase_hidden_regions(view, key):
-    view.erase_regions(string_key(key))
-
-
-def string_key(key):
-    return 'argformat: {}'.format(key)
-
-
 def line_indentation(view, pt):
     line = view.substr(view.line(pt))
     mo = re.match(r'^(\s*)', line)
@@ -159,19 +144,6 @@ def get_ruler(view):
         return ruler
     except:
         return None
-
-
-view_dicts = []
-
-
-def register_view_dict(d):
-    view_dicts.append(d)
-
-
-class ViewDictListener(sublime_plugin.EventListener):
-    def on_close(self, view):
-        for view_dict in view_dicts:
-            view_dict.pop(view.id(), None)
 
 
 def if_not_called_for(period_ms):
