@@ -1,31 +1,26 @@
 import sublime_plugin
 
-from .impl import perf
 from .impl import op
+from .impl import perf
 from .impl.common import proxy_set_to
 from .impl.listener import *
 from .impl.shared import view
 from .impl.sublime_util import *
 from .impl.sublime_util import get_ruler
-from .impl.sublime_util import single_sel_pos
 
 
 class AutosplitSplit(sublime_plugin.TextCommand):
     def run(self, edit):
-        pt = single_sel_pos(self.view)
-        if pt is None:
-            return
-
-        op.split_at(pt, edit)
+        with proxy_set_to(view, self.view):
+            op.erase_up_arrows()
+            op.split_at([reg.b for reg in self.view.sel()], edit)
 
 
 class AutosplitJoin(sublime_plugin.TextCommand):
     def run(self, edit):
-        pt = single_sel_pos(self.view)
-        if pt is None:
-            return
-
-        op.join_at(pt, edit)
+        with proxy_set_to(view, self.view):
+            op.erase_up_arrows()
+            op.join_at([reg.b for reg in self.view.sel()], edit)
 
 
 class AutosplitSplitIfTooLong(sublime_plugin.TextCommand):
@@ -35,6 +30,7 @@ class AutosplitSplitIfTooLong(sublime_plugin.TextCommand):
             return
 
         with proxy_set_to(view, self.view):
+            op.erase_up_arrows()
             op.split_lines_if_too_long([reg.b for reg in self.view.sel()], edit, ruler)
 
 

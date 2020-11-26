@@ -10,16 +10,6 @@ class Arglist:
         self.open = open  # after opening paren
         self.close = close  # before closing paren
 
-    def __eq__(self, rhs):
-        return self._as_tuple == rhs._as_tuple
-    
-    def __hash__(self):
-        return hash(self._as_tuple)
-
-    @property
-    def _as_tuple(self):
-        return self.open, self.close
-
     @property
     def begin(self):
         return self.open - 1
@@ -38,8 +28,24 @@ class Arglist:
             self.close
         )
 
+    def __eq__(self, rhs):
+        if isinstance(rhs, self.__class__):
+            return self._as_tuple == rhs._as_tuple
+        else:
+            return False
+    
+    def __hash__(self):
+        return hash(self._as_tuple)
+
+    @property
+    def _as_tuple(self):
+        return self.open, self.close
+
     def is_pt_inside(self, pt):
         return self.open <= pt <= self.close
+
+    def contains(self, arglist):
+        return self.is_pt_inside(arglist.open) and self.is_pt_inside(arglist.close)
 
     @property
     def is_multilined(self):
@@ -133,5 +139,4 @@ def arg_on_same_line_as_prec(arglist, i):
     except IndexError:
         return False
 
-    print(prec.end, arglist.args[i].begin)
     return on_same_line(view, prec.end, arglist.args[i].begin)

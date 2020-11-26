@@ -101,6 +101,10 @@ def retained_pos(view, pos):
 
 
 def relocating_posns(view, posns):
+    if len(posns) <= 1:
+        yield from posns
+        return
+
     with hidden_regions(view, [sublime.Region(pos) for pos in posns]) as getregs:
         for i in range(len(posns)):
             yield getregs()[i].b

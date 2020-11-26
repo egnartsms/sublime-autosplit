@@ -36,5 +36,5 @@ class Listener(sublime_plugin.ViewEventListener):
     @if_not_called_for(300)
     def on_selection_modified(self):
         with proxy_set_to(view, self.view):
-            view.erase_phantoms('autosplit:joinable')
+            op.erase_up_arrows()
             op.mark_joinables_at([reg.b for reg in view.sel()])
