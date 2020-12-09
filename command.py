@@ -12,9 +12,7 @@ class AutosplitSplit(sublime_plugin.TextCommand):
     def run(self, edit):
         with cxt.working_on(self.view):
             # op.erase_joinable_arrows()
-            # op.split_at([reg.b for reg in self.view.sel()], edit)
-            op.split_at(self.view.sel()[0].b, edit)
-
+            op.split_at([reg.b for reg in self.view.sel()], edit)
 
 # class AutosplitJoin(sublime_plugin.TextCommand):
 #     def run(self, edit):

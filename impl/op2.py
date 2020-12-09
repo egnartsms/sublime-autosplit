@@ -1,3 +1,5 @@
+from itertools import chain
+from operator import itemgetter
 from sublime import Region
 
 from .common import method_for
@@ -11,28 +13,37 @@ from .sublime_util import on_same_line
 from .sublime_util import row_at
 
 
-def split_at(pos, edit):
-    gtor = _split_at(pos)
-    perform_replacements(gtor, edit)
+def split_at(posns, edit):
+    to_split = {}
+
+    for pos in posns:
+        arglist, force_multilined = _split_at(pos)
+        if arglist is None:
+            continue
+        to_split[arglist] = to_split.get(arglist, False) or force_multilined
+
+    perform_replacements(edit, (
+        item
+        for arglist, fml in to_split.items()
+        for item in arglist.split_down(force_multilined=fml)
+    ))
 
 
 def _split_at(pos):
     E = parse_at(pos)
     if E is None or not E.args:
-        return
+        return None, None
 
     force_multilined = False
 
     while True:
         P = E.parse_parent()
         if P is None:
-            yield from E.split_down(force_multilined=force_multilined)
-            break
+            return E, force_multilined
 
         i = P.sub_index(E)
         if P.args[i].is_on_fresh_line() or i == len(P.args) - 1:
-            yield from E.split_down(force_multilined=force_multilined)
-            break
+            return E, force_multilined
 
         E = P
         # If cannot split the arglist that we're directly in (most nested), then the first
@@ -103,7 +114,6 @@ def split_multi(self):
 
 def pushdown(pos0, pos, indent):
     if on_same_line(cxt.view, pos0, pos):
-        # ind = indentation_at(cxt.view, pos0)
         yield Region(pos0, pos), '\n' + chr(0x20) * indent
 
 
@@ -141,12 +151,9 @@ def indent_arg_if_multilined(arg, pushed_row):
     return pushed_row
 
 
-def perform_replacements(replacements, edit):
-    replacements = list(replacements)
-    replacements.reverse()
+def perform_replacements(edit, replacements):
+    replacements = sorted(replacements, key=itemgetter(0), reverse=True)
 
     for reg, rplc in replacements:
         if cxt.view.substr(reg) != rplc:
-            # cxt.view.erase(edit, reg)
-            # cxt.view.insert(edit, reg.begin(), rplc)
             cxt.view.replace(edit, reg, rplc)
