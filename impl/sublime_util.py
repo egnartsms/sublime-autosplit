@@ -147,22 +147,13 @@ def redo_empty(view):
     return not cmd
 
 
-def line_too_long(view, pos, ruler):
-    row, col = view.rowcol(view.line(pos).end())
-    return col > ruler
-
-
 def line_ruler_pos(view, pos, ruler):
     row, col = view.rowcol(view.line(pos).end())
     return view.text_point(row, ruler) if col > ruler else None
 
 
-def get_ruler(view):
-    try:
-        [ruler] = view.settings().get('rulers')
-        return ruler
-    except:
-        return None
+def line_too_long(view, pos, ruler):
+    return line_ruler_pos(view, pos, ruler) is not None
 
 
 def if_not_called_for(period_ms):

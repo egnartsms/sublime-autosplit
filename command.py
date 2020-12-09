@@ -12,7 +12,7 @@ class AutosplitSplit(sublime_plugin.TextCommand):
     def run(self, edit):
         with cxt.working_on(self.view):
             # op.erase_joinable_arrows()
-            op.split_at([reg.b for reg in self.view.sel()], edit)
+            op.split_all_at(edit, [reg.b for reg in self.view.sel()])
 
 # class AutosplitJoin(sublime_plugin.TextCommand):
 #     def run(self, edit):
@@ -21,15 +21,13 @@ class AutosplitSplit(sublime_plugin.TextCommand):
 #             op.join_at([reg.b for reg in self.view.sel()], edit)
 
 
-# class AutosplitSplitIfTooLong(sublime_plugin.TextCommand):
-#     def run(self, edit):
-#         ruler = get_ruler(self.view)
-#         if ruler is None:
-#             return
-
-#         with cxt.working_on(self.view):
-#             op.erase_joinable_arrows()
-#             op.split_lines_if_too_long([reg.b for reg in self.view.sel()], edit, ruler)
+class AutosplitSplitIfTooLong(sublime_plugin.TextCommand):
+    def run(self, edit):
+        with cxt.working_on(self.view):
+            if cxt.ruler is None:
+                return
+            # op.erase_joinable_arrows()
+            op.split_all_if_too_long(edit, [reg.b for reg in self.view.sel()])
 
 
 # class AutosplitOnSelMod(sublime_plugin.TextCommand):

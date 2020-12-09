@@ -73,13 +73,9 @@ class Arg:
 #     return self.open <= pt <= self.close
 
 
-# @method_for(Arg)
-# def is_pt_inside(self, pt):
-#     if self.end is None:
-#         # We deal with left-only parsed arglists sometimes
-#         return self.begin <= pt
-#     else:
-#         return self.begin <= pt <= self.end
+@method_for(Arg)
+def is_pt_inside(self, pt):
+    return self.begin <= pt < self.end
 
 
 # @method_for(Arg, Arglist)

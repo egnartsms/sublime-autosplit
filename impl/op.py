@@ -196,54 +196,12 @@ def split(self, edit):
 
 
 @method_for(Arglist)
-def split_minimally(self, edit):
-    pass
-
-
-@method_for(Arglist)
 def space_regs(self):
     beg = self.open
     for arg in self.args:
         yield sublime.Region(beg, arg.begin)
         beg = arg.end
     yield sublime.Region(beg, self.close)
-
-
-@contextlib.contextmanager
-def fixing_up_past_last_arg_cursor(arglist):
-    """Fix the cursor standing after the last arg to be there after the arglist is split.
-
-    Without this hack, the cursor ends up before the closing paren of the arglist. This
-    happens because Sublime relocates empty cursors when insertion happens right at their
-    position (i.e. Sublime inserts before cursors).
-    """
-    if not arglist.args:
-        yield
-        return
-
-    last_arg = arglist.args[-1]
-
-    idx = None
-    sel = cxt.view.sel()
-
-    for i, cur in enumerate(sel):
-        if not cur.empty():
-            continue
-        if not arglist.is_pt_inside(cur.b):
-            continue
-        if cur.b >= last_arg.end:
-            idx = i
-            break
-
-    if idx is None:
-        yield
-        return
-
-    del sel[idx]
-
-    with retained_pos(cxt.view, last_arg.end - 1) as new_pos:
-        yield
-        sel.add(new_pos() + 1)
 
 
 def pushdown(edit, prec_space_reg, delta_indent=0):
