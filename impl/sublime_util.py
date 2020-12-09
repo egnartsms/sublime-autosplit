@@ -1,6 +1,5 @@
 import re
 import sublime
-import sublime_plugin
 import time
 
 from contextlib import contextmanager
@@ -8,18 +7,13 @@ from functools import partial
 from functools import update_wrapper
 
 
-__all__ = ['ViewDictListener']
+def ws_span(view, pos):
+    reg = view.find('\\s+', pos)
+    return 0 if reg is None or reg.begin() != pos else reg.size()
 
 
 def ws_end_after(view, pos):
-    reg = view.find('\\s+', pos)
-    return pos if reg is None or reg.begin() != pos else reg.end()
-
-
-def erase_ws_after(view, edit, pos):
-    end = ws_end_after(view, pos)
-    if pos < end:
-        view.erase(edit, sublime.Region(pos, end))
+    return pos + ws_span(view, pos)
 
 
 def ws_begin_before(view, pos):
@@ -30,19 +24,50 @@ def ws_begin_before(view, pos):
     return start + 1
 
 
-def erase_ws_before(view, edit, pos):
-    begin = ws_begin_before(view, pos)
-    if begin < pos:
-        view.erase(edit, sublime.Region(begin, pos))
-
-    return begin
+def row_at(view, pos):
+    row, col = view.rowcol(pos)
+    return row
 
 
 def on_same_line(view, pos1, pos2):
-    row1, col1 = view.rowcol(pos1)
-    row2, col2 = view.rowcol(pos2)
+    return row_at(view, pos1) == row_at(view, pos2)
 
-    return row1 == row2
+
+def is_at_indent_start(view, pos):
+    return ws_end_after(view, view.line(pos).begin()) == pos
+
+
+def is_reg_singlelined(view, reg):
+    return on_same_line(view, reg.begin(), reg.end())
+
+
+def is_reg_multilined(view, reg):
+    return not is_reg_singlelined(view, reg)
+
+
+def indentation_at(view, pos):
+    line_reg = view.line(pos)
+    return ws_span(view, line_reg.begin())
+
+
+def row_indentation(view, row):
+    return ws_span(view, view.text_point(row, 0))
+
+
+def row_line_reg(view, row):
+    return view.line(view.text_point(row, 0))
+
+
+def substr_row_line(view, row):
+    return view.substr(row_line_reg(view, row))
+
+
+def row_rstrip_pos(view, row):
+    return ws_begin_before(view, row_line_reg(view, row).end())
+
+
+def rstrip_pos(view, pos):
+    return ws_begin_before(view, view.line(pos).end())
 
 
 keypool = set()
@@ -115,12 +140,6 @@ def relocating_regs(view, regs):
     with hidden_regions(view, regs) as getregs:
         for i in range(len(regs)):
             yield getregs()[i]
-
-
-def line_indentation(view, pt):
-    line = view.substr(view.line(pt))
-    mo = re.match(r'^(\s*)', line)
-    return mo.end(1) - mo.start(1)
 
 
 def redo_empty(view):

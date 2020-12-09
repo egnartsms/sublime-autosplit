@@ -1,4 +1,4 @@
-from .common import Proxy
+from contextlib import contextmanager
 
 
 class Scope:
@@ -8,4 +8,22 @@ class Scope:
     comma = 'punctuation.separator.arguments'
 
 
-view = Proxy()
+class Context:
+    @contextmanager
+    def working_on(self, view):
+        self.view = view
+
+        try:
+            [self.ruler] = view.settings().get('rulers')
+        except:
+            self.ruler = None
+
+        self.tab_size = view.settings().get('tab_size')
+
+        try:
+            yield
+        finally:
+            self.__dict__.clear()
+
+
+cxt = Context()
