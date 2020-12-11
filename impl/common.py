@@ -62,21 +62,19 @@ def find_index_such(itbl, pred):
     return -1
 
 
-def gen_first_last(itbl):
+def tracking_last(itbl):
     it = iter(itbl)
-    isfirst = True
+    prev = next(it)
 
-    next(it)
-
-    while True:    
+    while True:
         try:
-            next(it)
+            cur = next(it)
         except StopIteration:
-            yield isfirst, True
+            yield prev, True
             break
 
-        yield isfirst, False
-        isfirst = False
+        yield prev, False
+        prev = cur
 
 
 def iprepend(*items, to):

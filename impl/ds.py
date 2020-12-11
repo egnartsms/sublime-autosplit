@@ -24,17 +24,17 @@ class Arglist:
     def end(self):
         return self.close + 1
 
-    def __eq__(self, rhs):
-        if isinstance(rhs, self.__class__):
-            return self._as_tuple() == rhs._as_tuple()
-        else:
-            return False
+    # def __eq__(self, rhs):
+    #     if isinstance(rhs, self.__class__):
+    #         return self._as_tuple() == rhs._as_tuple()
+    #     else:
+    #         return False
     
-    def __hash__(self):
-        return hash(self._as_tuple())
+    # def __hash__(self):
+    #     return hash(self._as_tuple())
 
-    def _as_tuple(self):
-        return self.open, self.close
+    # def _as_tuple(self):
+    #     return self.open, self.close
 
 
 class Arg:
@@ -73,9 +73,9 @@ class Arg:
 #     return self.open <= pt <= self.close
 
 
-@method_for(Arg)
-def is_pt_inside(self, pt):
-    return self.begin <= pt < self.end
+# @method_for(Arg)
+# def is_pt_inside(self, pt):
+#     return self.begin <= pt < self.end
 
 
 # @method_for(Arg, Arglist)

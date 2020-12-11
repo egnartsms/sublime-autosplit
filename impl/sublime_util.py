@@ -29,6 +29,11 @@ def row_at(view, pos):
     return row
 
 
+def col_at(view, pos):
+    row, col = view.rowcol(pos)
+    return col
+
+
 def on_same_line(view, pos1, pos2):
     return row_at(view, pos1) == row_at(view, pos2)
 
