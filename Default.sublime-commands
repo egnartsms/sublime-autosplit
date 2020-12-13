@@ -1,14 +1,2 @@
 [
-    {
-        "caption": "Autosplit: Show perf",
-        "command": "autosplit_show_perf"
-    },
-    {
-        "caption": "Autosplit: Reset perf",
-        "command": "autosplit_reset_perf"
-    },
-    {
-        "caption": "Autosplit: Trigger on_selection_modified",
-        "command": "autosplit_on_sel_mod"
-    }
 ]

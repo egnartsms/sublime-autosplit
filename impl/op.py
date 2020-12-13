@@ -1,5 +1,6 @@
 import sublime
 
+from functools import partial
 from itertools import starmap
 from sublime import Region
 
@@ -288,11 +289,15 @@ def join_all_at(edit, posns):
 
 
 def replacements_for_join_at(pos):
-    res = what_to_join_at(pos)
-    if res is None:
+    join_spec = what_to_join_at(pos)
+    if join_spec is None:
         return
 
-    E, row, full = res
+    yield from replacements_by_join_spec(join_spec)
+
+
+def replacements_by_join_spec(join_spec):
+    E, row, full = join_spec
 
     if row == 0:
         yield from E.replacements_for_join(full=full)
@@ -528,12 +533,14 @@ def has_multilined_sub_in_tail_pos(self):
 
 
 def mark_all_joinables_at(posns):
+    arrow_posns = set()
+
     for pos in posns:
-        res = what_to_join_at(pos)
-        if res is None:
+        join_spec = what_to_join_at(pos)
+        if join_spec is None:
             continue
 
-        E, row, full = res
+        E, row, full = join_spec
 
         if row == 0:
             arrow = '\u2191' if full else '\u21e1'
@@ -548,12 +555,24 @@ def mark_all_joinables_at(posns):
                 # ugly
                 continue                
 
-        cxt.view.add_phantom(
-            'autosplit:joinable',
-            Region(arrow_pos),
-            arrow,
-            sublime.LAYOUT_INLINE
-        )
+        if arrow_pos not in arrow_posns:
+            def dojoin(view, href):
+                [reg] = view.query_phantom(dojoin.phid)
+                view.run_command('autosplit_join', {'at': reg.begin()})
+
+            phid = cxt.view.add_phantom(
+                'autosplit:joinable',
+                Region(arrow_pos),
+                ARROW_PHANTOM.format(arrow),
+                sublime.LAYOUT_INLINE,
+                partial(dojoin, cxt.view)
+            )
+            dojoin.phid = phid
+
+
+ARROW_PHANTOM = '''
+    <a href="" style="text-decoration: none; color: var(--foreground)">{}</a>
+'''
 
 
 def erase_joinable_arrows():

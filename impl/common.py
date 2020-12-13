@@ -22,25 +22,6 @@ def tracking_last(itbl):
         prev = cur
 
 
-class lazy_property:
-    def __init__(self, method):
-        self.method = method
-        self.cache_name = "_{}".format(method.__name__)
-        update_wrapper(self, method)
-
-    def __get__(self, instance, owner):
-        if instance is None:
-            return self
-
-        if hasattr(instance, self.cache_name):
-            result = getattr(instance, self.cache_name)
-        else:
-            result = self.method(instance)
-            setattr(instance, self.cache_name, result)
-
-        return result
-
-
 def method_for(*klasses):
     def install_in(fn, klass):
         name = fn.__name__
