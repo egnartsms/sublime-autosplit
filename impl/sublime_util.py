@@ -1,4 +1,3 @@
-import re
 import sublime
 import time
 

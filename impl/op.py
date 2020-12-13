@@ -1,347 +1,399 @@
-import contextlib
 import sublime
 
-from itertools import islice
 from itertools import starmap
+from sublime import Region
 
-from .arglist import Arg
-from .arglist import Arglist
-from .common import find_index_such
-from .common import group_nested
-from .common import last_such_semi
 from .common import method_for
 from .common import pairwise
-from .parse import explore_enclosing_arglists
+from .common import tracking_last
+from .ds import Arg
+from .ds import Arglist
+from .parse import parse_at
+from .shared import Scope
 from .shared import cxt
+from .sublime_util import col_at
 from .sublime_util import indentation_at
+from .sublime_util import is_at_indent_start
+from .sublime_util import is_reg_multilined
 from .sublime_util import line_ruler_pos
-from .sublime_util import line_too_long
-from .sublime_util import multilined
 from .sublime_util import on_same_line
 from .sublime_util import relocating_posns
-from .sublime_util import relocating_regs
-from .sublime_util import retained_pos
-from .sublime_util import row_indentation
+from .sublime_util import row_at
+from .sublime_util import row_rstrip_pos
 from .sublime_util import rstrip_pos
-from .sublime_util import singlelined
+from .sublime_util import substr_row_line
 
 
-def outermost_starting_on_same_line(pos):
-    xpl = explore_enclosing_arglists(pos)
-    enclosing, found = None, None
-
-    try:
-        while True:
-            enclosing = next(xpl)
-
-            if not on_same_line(cxt.view, enclosing.begin, pos):
-                if found is None:
-                    # If not found anything on this line, then we need the whole
-                    # 'enclosing' parsed, not just to the left paren
-                    next(xpl)
-                break
-
-            next(xpl)
-
-            enclosing, found = None, enclosing
-    except StopIteration:
-        enclosing = None
-
-    return enclosing, found
+@method_for(Arglist)
+def is_empty(self):
+    return not self.args
 
 
-def split_at(posns, edit):
-    """Find outermost arglist that starts on same line as pos and split it.
+@method_for(Arglist)
+def is_oneliner(self):
+    return on_same_line(cxt.view, self.begin, self.end)
 
-    If this arglist is itself a part of an enclosing arglist and it's not the first
-    argument on its line, then first push it down.
 
-    Example:
-        outerfunc(
-           inner_func_1(...),
-           inner_func_2(a, 10, 20), inner_func_3(x, [y], z),
-           //                            split here: ^
-           ...
-        )
+@method_for(Arglist)
+def is_multiliner(self):
+    return not self.is_oneliner()
 
-    First 'inner_func_3' will be pushed to the next line, then its arguments will be split
-    across 3 lines.
-    """
-    seen = set()
 
+@method_for(Arglist)
+def has_smth_at_row0(self):
+    return on_same_line(cxt.view, self.begin, self.args[0].begin)
+
+
+@method_for(Arglist)
+def has_arg_starting_below_row0(self):
+    return row_at(cxt.view, self.args[-1].begin) - row_at(cxt.view, self.begin) >= 1
+
+
+@method_for(Arglist)
+def has_arg_starting_below_row1(self):
+    return row_at(cxt.view, self.args[-1].begin) - row_at(cxt.view, self.begin) >= 2
+
+
+def split_all_at(edit, posns):
     for pos in relocating_posns(cxt.view, posns):
-        enclosing, found = outermost_starting_on_same_line(pos)
-        unique_pos = (found or enclosing).open
-
-        if unique_pos in seen:
-            continue
-
-        with retained_pos(cxt.view, unique_pos) as get_unique_pos:
-            if found is None:
-                if enclosing is not None:
-                    enclosing.split(edit)
-                continue
-
-            if enclosing is not None:
-                i = enclosing.arg_index_containing_nested_arglist(found)
-                if not enclosing.arg_on_fresh_line(i):
-                    enclosing.push_arg_down_adjust(edit, i)
-
-            found.split(edit)
-
-            seen.add(get_unique_pos())
+        perform_replacements(edit, replacements_for_split_at(pos))   
 
 
-def split_lines_if_too_long(posns, edit):
-    ruler_posns = (line_ruler_pos(cxt.view, pos, cxt.ruler) for pos in posns)
-    ruler_posns = {pos for pos in ruler_posns if pos is not None}
-
-    for ruler_pos in relocating_posns(cxt.view, ruler_posns):
-        enclosing, found = outermost_starting_on_same_line(ruler_pos)
-
-        if enclosing is not None:
-            i = enclosing.arg_index_at(ruler_pos)
-            if not enclosing.arg_on_fresh_line(i):
-                if found is None:
-                    # it still may surpass the ruler but that's all we can do
-                    enclosing.push_arg_down(edit, i)
-                    continue
-                else:
-                    enclosing.push_arg_down_adjust(edit, i)
-                    if not line_too_long(cxt.view, enclosing.args[i].begin, cxt.ruler):
-                        # We don't actually need to split 'found', as pushing down its
-                        # containing argument solved the problem of too long a line
-                        continue
-
-        if found is not None:
-            found.split(edit)
-
-
-@method_for(Arglist)
-def arg_index_containing_nested_arglist(self, subarglist):
-    for i, arg in enumerate(self.args):
-        if any(al is subarglist for al in arg.arglists):
-            return i
-
-    raise ValueError
-
-
-@method_for(Arglist)
-def arg_index_at(self, pos):
-    for i, arg in enumerate(self.args):
-        if arg.is_pt_inside(pos):
-            return i
-
-    raise ValueError
-
-
-@method_for(Arglist)
-def arg_on_fresh_line(self, i):
-    return multilined(cxt.view, self.space_before_arg(i))
-
-
-@method_for(Arglist)
-def space_before_arg(self, i):
-    beg = self.open if i == 0 else self.args[i - 1].end
-    return sublime.Region(beg, self.args[i].begin)
-
-
-@method_for(Arglist)
-def push_arg_down(self, edit, i):
-    delta_indent = cxt.indlvl if i == 0 else 0
-    pushdown(edit, self.space_before_arg(i), delta_indent)
-
-
-@method_for(Arglist)
-def push_arg_down_adjust(self, edit, i):
-    delta_indent = cxt.indlvl if i == 0 else 0
-    delta = pushdown_delta(edit, self.space_before_arg(i), delta_indent)
-    self.args[i].adjust_posns(delta)
-
-
-@method_for(Arg)
-def adjust_posns(self, delta):
-    self.begin += delta
-    if self.end is not None:
-        self.end += delta
-
-    for arglist in self.arglists:
-        arglist.adjust_posns(delta)
-
-
-@method_for(Arglist)
-def adjust_posns(self, delta):
-    self.open += delta
-    self.close += delta
-
-    for arg in self.args:
-        arg.adjust_posns(delta)
-
-
-@method_for(Arglist)
-def split(self, edit):
-    if not self.args:
+def replacements_for_split_at(pos):
+    E = parse_at(pos)
+    if E is None or not E.args:
         return
 
-    with fixing_up_past_last_arg_cursor(self):
-        for i, reg in enumerate(relocating_regs(cxt.view, list(self.space_regs()))):
-            if not singlelined(cxt.view, reg):
-                continue
-
-            pushdown(
-                edit,
-                reg,
-                cxt.indlvl if i == 0 else -cxt.indlvl if i == len(self.args) else 0
-            )
-
-
-@method_for(Arglist)
-def space_regs(self):
-    beg = self.open
-    for arg in self.args:
-        yield sublime.Region(beg, arg.begin)
-        beg = arg.end
-    yield sublime.Region(beg, self.close)
-
-
-def pushdown(edit, prec_space_reg, delta_indent=0):
-    cxt.view.erase(edit, prec_space_reg)
-    nws = indentation_at(cxt.view, prec_space_reg.begin())
-    cxt.view.insert(edit, prec_space_reg.begin(), '\n' + chr(0x20) * (nws + delta_indent))
-
-
-def pushdown_delta(edit, prec_space_reg, delta_indent=0):
-    with retained_pos(cxt.view, prec_space_reg.end()) as getpos:
-        pushdown(edit, prec_space_reg, delta_indent)
-        return getpos() - prec_space_reg.end()
-
-
-### Lifting up ###
-def innermost_enclosing_multilined(pos):
-    xpl = explore_enclosing_arglists(pos)
+    force_multilined = False
 
     while True:
-        try:
-            arglist = next(xpl)
-            next(xpl)
-        except StopIteration:
-            return None
-
-        if arglist.is_multilined():
+        P = E.parse_parent()
+        if P is None or P.is_sub_splittable(E):
+            yield from E.split_down(force_multilined)
             break
 
-    return arglist
+        E = P
+        # If cannot split the arglist that we're directly in (most nested), then the first
+        # ancestor that can be split must be made fully multilined
+        force_multilined = True
 
 
-def all_innermost_enclosing_multilined(posns):
-    """Return a list of unique arglists encompassing each position.
-
-    Arglists in ascending order. If B is nested into A, then only A will show up in the
-    resulting list.
-    """
-    return sorted(
-        set(filter(None, (innermost_enclosing_multilined(pos) for pos in posns))),
-        key=lambda al: al.open
-    )
+@method_for(Arglist)
+def is_sub_splittable(self, sub):
+    arg = self.sub_arg(sub)
+    return arg.is_on_fresh_line() or self.args.index(arg) == len(self.args) - 1
 
 
-def join_at(posns, edit):
-    """Join all the distinct innermost enclosing multilined arglists"""
-    if cxt.ruler is None:
+@method_for(Arg)
+def is_on_fresh_line(self):
+    return is_at_indent_start(cxt.view, self.begin)
+
+
+@method_for(Arglist)
+def sub_arg(self, sub):
+    return next(arg for arg in self.args if sub in arg.arglists)
+
+
+@method_for(Arglist)
+def split_down(self, force_multilined=False):
+    if not force_multilined and self.has_smth_at_row0():
+        yield from self.split_off_row0()
+    else:
+        yield from self.split_multi()
+
+
+@method_for(Arglist)
+def split_off_row0(self):
+    if not self.args:
         return
 
-    arglists = all_innermost_enclosing_multilined(posns)
-    arglists.reverse()
+    ind0 = indentation_at(cxt.view, self.begin)
+    yield from pushdown(self.open, self.args[0].begin, indent=ind0 + cxt.tab_size)
+    
+    if self.has_smth_at_row0():
+        pushed_row = row_at(cxt.view, self.begin)
+        for arg in self.args:
+            pushed_row = yield from indent_arg_if_multilined(arg, pushed_row)
 
-    groups = group_nested(arglists, lambda child, parent: parent.contains(child))
+    yield from pushdown(self.args[-1].end, self.close, indent=ind0)
 
-    for group in groups:
-        # Take outermost which is still joinable
-        tojoin, kind = last_such_semi(group, lambda al: al.joinability())
-        if tojoin is None:
+
+@method_for(Arglist)
+def split_multi(self):
+    if not self.args:
+        return
+
+    ind0 = indentation_at(cxt.view, self.begin)
+    prev = self.open
+
+    # if nothing at row 0, then 'indent_arg_if_multilined' won't produce anything below
+    pushed_row = row_at(cxt.view, self.begin) if self.has_smth_at_row0() else -1
+
+    for arg in self.args:
+        yield from pushdown(prev, arg.begin, indent=ind0 + cxt.tab_size)
+        pushed_row = yield from indent_arg_if_multilined(arg, pushed_row)
+        prev = arg.end
+
+    yield from pushdown(prev, self.close, indent=ind0)
+
+
+def pushdown(pos0, pos, indent=None):
+    # TODO: with the following check, we act less intrusive. What's the right thing?
+    #if on_same_line(cxt.view, pos0, pos):
+    if indent is None:
+        indent = indentation_at(cxt.view, pos0)
+    yield Region(pos0, pos), '\n' + chr(0x20) * indent
+
+
+def indent_arg_if_multilined(arg, pushed_row):
+    """Indent all the lines of arg if it starts on pushed_row.
+
+    :return: the new pushed_row which is the row at 'arg.end', or the same pushed_row
+            if nothing had to be indented.
+
+    Examples:
+        func(nested_func1(), nested_func2(
+            blah_once(1,2,3),
+            blah_twice(1,2,3)
+        ))
+
+        When splitting 'func', 'blah_once' and 'blah_twice' calls have to be indented.
+
+        func(nested_func1(), nested_func2(
+            blah_once(1,2,3),
+            blah_twice(1,2,3)
+        ), another_func(
+            blah_thrice(1,2,3)
+        ))
+        
+        Here all the same but 'blah_trice' has to be indented, too.
+    """
+    row = row_at(cxt.view, arg.begin)
+    if row == pushed_row:
+        end_row = row_at(cxt.view, arg.end)
+        while row < end_row:
+            row += 1
+            # This effectively means: insert this many spaces at line beginning
+            yield Region(cxt.view.text_point(row, 0)), chr(0x20) * cxt.tab_size
+        pushed_row = row
+
+    return pushed_row
+
+
+def perform_replacements(edit, replacements):
+    replacements = list(replacements)
+    replacements.reverse()
+
+    sel = cxt.view.sel()
+
+    for reg, rplc in replacements:
+        if cxt.view.substr(reg) == rplc:
             continue
 
-        if kind == '1st':
-            replacements = tojoin.replacements_for_join()
-        elif kind == 'next':
-            replacements = tojoin.replacements_for_join_to_next_line()
+        # In case the cursor was here before:
+        # func(arg1, arg2,)
+        #                 ^
+        # Then after split it will become at the end of the inserted whitespace region,
+        # i.e. before the closing paren. We detect such cases and relocate the cursor to
+        # the beginning of the inserted region.
+        if cxt.view.match_selector(reg.end(), Scope.close_paren):
+            fix_idx = next(
+                (i for i, cur in enumerate(sel) if reg.contains(cur)),
+                None
+            )
         else:
-            raise RuntimeError
+            fix_idx = None
 
-        perform_replacements(replacements, edit)
+        cxt.view.erase(edit, reg)
+        cxt.view.insert(edit, reg.begin(), rplc)
+        # cxt.view.replace(edit, reg, rplc)
+
+        if fix_idx is not None:
+            del sel[fix_idx]
+            sel.add(reg.begin())
+
+
+def split_all_if_too_long(edit, posns):
+    for pos in relocating_posns(cxt.view, posns):
+        perform_replacements(edit, replacements_for_split_if_too_long(pos))
+
+
+def replacements_for_split_if_too_long(pos):
+    """Generate replacements if line at pos extends past the ruler
+
+    Current logic is: find the outermost arglist E starting on same line, and its parent
+    P. If P's arg containing E does not start on a fresh line, then split P across
+    multiple lines. In all other cases, split E as much as needed.
+    """
+    offending_pos = line_ruler_pos(cxt.view, pos, cxt.ruler)
+    if offending_pos is None:
+        return
+
+    offending_row = row_at(cxt.view, offending_pos)
+
+    E = parse_at(offending_pos)
+    if E is None:
+        return
+
+    if row_at(cxt.view, E.begin) < offending_row:
+        yield from E.split_multi()
+        return
+
+    P = None
+
+    while True:
+        P = E.parse_parent()
+        if P is None:
+            break
+
+        if row_at(cxt.view, P.begin) < offending_row:
+            break
+
+        E = P
+
+    if P is not None:
+        arg = P.sub_arg(E)
+        if not arg.is_on_fresh_line():
+            yield from P.split_multi()
+            return
+
+    if E.args:
+        yield from E.split_to_fit()
 
 
 @method_for(Arglist)
-def fits_on_1st_line(self):
-    return (
-        not self.has_hard_linebreak() and
-        self.begin_col() + self.min_ext_size() <= cxt.ruler
-    )
+def row0_contents_size(self):
+    line_reg = cxt.view.line(self.open)
+    end = min(line_reg.end(), self.args[-1].end)
+    return end - self.open
 
 
 @method_for(Arglist)
-def fits_on_next_line(self):
-    return (
-        not self.has_hard_linebreak() and
-        self.args and
-        self.begin_col() + self.min_ext_size() <= cxt.ruler
-    )
+def row0_fits_on_next_line(self):
+    ind0 = indentation_at(cxt.view, self.begin)
+    return ind0 + cxt.tab_size + self.row0_contents_size() < cxt.ruler
 
 
 @method_for(Arglist)
-def joinability(self):
-    if self.is_joinable_to_1st_line():
-        return '1st'
-    elif self.is_joinable_to_next_line():
-        return 'next'
+def split_to_fit(self):
+    if self.row0_fits_on_next_line():
+        yield from self.split_off_row0()
     else:
-        return False
+        yield from self.split_multi()
+
+
+def join_all_at(edit, posns):
+    for pos in relocating_posns(cxt.view, posns):
+        perform_replacements(edit, replacements_for_join_at(pos))
+
+
+def replacements_for_join_at(pos):
+    res = what_to_join_at(pos)
+    if res is None:
+        return
+
+    E, row, full = res
+
+    if row == 0:
+        yield from E.replacements_for_join(full=full)
+    elif row == 1:
+        yield from E.replacements_for_join_to_row1(full=full)
+    else:
+        raise RuntimeError
+
+
+def what_to_join_at(pos):
+    """Return None or (Arglist, row, full).
+    
+    row is either 0 or 1; full is either False, True or None (not joinable).
+    """
+    E = parse_at(pos)
+
+    while E is not None and E.is_oneliner():
+        E = E.parse_parent()
+
+    if E is None:
+        return None
+
+    if E.has_unerasable_linebreak():
+        return None
+
+    if E.is_empty():
+        return E, 0, True if E.open < E.close else None
+    elif E.has_smth_at_row0():
+        return E.row0_join_spec() if E.has_arg_starting_below_row0() else None
+    elif E.has_arg_starting_below_row1():
+        return E.row1_join_spec()
+    elif E.has_multilined_sub_in_tail_pos():
+        return E.full_to_1_or_partial_to_0_join_spec()
+    else:
+        return E.row0_join_spec()
 
 
 @method_for(Arglist)
-def is_joinable_to_1st_line(self):
-    if self.has_hard_linebreak():
-        return False
+def row0_join_spec(self):
+    col0 = self.join_col0()
+    full = None
 
-    return self.begin_col() + self.min_ext_size() <= cxt.ruler
-
-
-@method_for(Arglist)
-def is_joinable_to_next_line(self):
-    if not self.args:
-        return False
-
-    if self.has_hard_linebreak():
-        return False
-
-    row = self.begin_row()
-
-    row0 = self.args[0].begin_row()
-    if row0 != row + 1:
-        return False
-
-    row_last = self.args[-1].end_row()
-    if row_last == row + 1:
-        return False
-
-    ind = row_indentation(cxt.view, row + 1)
-    return ind + self.min_int_size() <= cxt.ruler
+    if col0 + self.min_size() <= cxt.ruler:
+        return self, 0, True
+    elif (self.has_multilined_sub_in_tail_pos() and 
+            col0 + self.min_size_partial_join() <= cxt.ruler):
+        return self, 0, False
+    else:
+        return None
 
 
 @method_for(Arglist)
-def has_hard_linebreak(self):
-    return any(arg.has_hard_linebreak() for arg in self.args)
+def row1_join_spec(self):
+    col1 = self.join_col1()
+    full = None
+
+    if col1 + self.min_int_size() <= cxt.ruler:
+        return self, 1, True
+    elif (self.has_multilined_sub_in_tail_pos() and 
+            col1 + self.min_int_size_partial_join() <= cxt.ruler):
+        return self, 1, False
+    else:
+        return None
+
+
+@method_for(Arglist)
+def full_to_1_or_partial_to_0_join_spec(self):
+    if self.join_col1() + self.min_int_size() <= cxt.ruler:
+        return self, 1, True
+    elif self.join_col0() + self.min_size_partial_join() <= cxt.ruler:
+        return self, 0, False
+    else:
+        return None
+
+
+@method_for(Arglist)
+def join_col0(self):
+    return col_at(cxt.view, self.begin)
+
+
+@method_for(Arglist)
+def join_col1(self):
+    return indentation_at(cxt.view, self.begin) + cxt.tab_size
+
+
+@method_for(Arglist)
+def has_unerasable_linebreak(self):
+    return any(arg.has_unerasable_linebreak() for arg in self.args)
 
 
 @method_for(Arg)
-def has_hard_linebreak(self):
-    return any(
-        '\n' in cxt.view.substr(reg) for reg in self.regions_outside_nested_arglists()
+def has_unerasable_linebreak(self):
+    return (
+        any(is_reg_multilined(cxt.view, reg)
+            for reg in self.regions_outside_arglists()) or
+        any(arglist.has_unerasable_linebreak() for arglist in self.arglists)
     )
 
 
 @method_for(Arg)
-def regions_outside_nested_arglists(self):
+def regions_outside_arglists(self):
     def gen():
         yield self.begin
         for arglist in self.arglists:
@@ -349,26 +401,24 @@ def regions_outside_nested_arglists(self):
             yield arglist.end
         yield self.end
 
-    return starmap(sublime.Region, pairwise(gen()))
+    return starmap(Region, pairwise(gen()))
 
 
 @method_for(Arglist)
-def min_int_size(self):
-    spaces_between = max(0, len(self.args) - 1)
-    return spaces_between + sum(arg.min_size() for arg in self.args)
+def replacements_for_join(self, full=True):
+    prev = self.open
+    rplc = ''
 
+    for arg, islast in tracking_last(self.args):
+        yield Region(prev, arg.begin), rplc
+        if not islast or full:
+            yield from arg.replacements_for_join()
+        elif not on_same_line(cxt.view, self.begin, arg.begin):
+            yield from arg.replacements_for_dedent()
+        prev = arg.end
+        rplc = chr(0x20)
 
-@method_for(Arglist)
-def min_ext_size(self):
-    return self.min_int_size() + 2
-
-
-@method_for(Arg)
-def min_size(self):
-    return (
-        sum(reg.size() for reg in self.regions_outside_nested_arglists()) +
-        sum(arglist.min_ext_size() for arglist in self.arglists)
-    )
+    yield Region(prev, self.close), ''
 
 
 @method_for(Arg)
@@ -378,83 +428,129 @@ def replacements_for_join(self):
 
 
 @method_for(Arglist)
-def replacements_for_join(self):
-    beg = self.open
-    rplc = ''
+def replacements_for_join_to_row1(self, full=True):
+    ind0 = indentation_at(cxt.view, self.begin)
+    
+    yield from pushdown(self.open, self.args[0].begin, ind0 + cxt.tab_size)
 
-    for arg in self.args:
-        yield sublime.Region(beg, arg.begin), rplc
-        yield from arg.replacements_for_join()
-        beg = arg.end
-        rplc = chr(0x20)
+    prev = None
+    for arg, islast in tracking_last(self.args):
+        if prev is not None:
+            yield Region(prev, arg.begin), chr(0x20)
+        if not islast or full:
+            yield from arg.replacements_for_join()
+        prev = arg.end
 
-    yield sublime.Region(beg, self.close), ''
+    yield from pushdown(prev, self.close, ind0)
+
+
+@method_for(Arg)
+def replacements_for_dedent(self):
+    row = row_at(cxt.view, self.begin)
+    row_end = row_at(cxt.view, self.end)
+
+    while row < row_end:
+        row += 1
+        start = cxt.view.text_point(row, 0)
+        yield Region(start, start + cxt.tab_size), ''
 
 
 @method_for(Arglist)
-def replacements_for_join_to_next_line(self):
-    row0 = self.begin_row()
+def min_int_size(self):
+    spaces_between = max(0, len(self.args) - 1)
+    return spaces_between + sum(arg.min_size() for arg in self.args)
 
-    k = find_index_such(self.args, lambda arg: arg.end_row() >= row0 + 2)
-    if k == -1:
-        return
 
-    if k > 0 and self.args[k].begin_row() > row0 + 1:
-        # Cases like this:
-        #    func(
-        #       arg1,
-        #       nested_func(nested_arg)
-        #    )
-        # as opposed to this:
-        #    func(
-        #       arg1, nested_func(
-        #          nested_arg
-        #       )
-        #    )
-        #
-        # In the first case, we should also replace the space before the kth arg itself
-        beg = self.args[k - 1].end
-    else:
-        beg = None
+@method_for(Arglist)
+def min_size(self):
+    return self.min_int_size() + 2
 
-    for arg in islice(self.args, k, None):
-        if beg is not None:
-            yield sublime.Region(beg, arg.begin), chr(0x20)
-        yield from arg.replacements_for_join()
-        beg = arg.end
 
-    yield (
-        sublime.Region(beg, self.close),
-        '\n' + chr(0x20) * (row_indentation(cxt.view, row0 + 1) - cxt.indlvl)
+@method_for(Arg)
+def min_size(self):
+    return (
+        sum(reg.size() for reg in self.regions_outside_arglists()) +
+        sum(arglist.min_size() for arglist in self.arglists)
     )
 
 
-def perform_replacements(replacements, edit):
-    replacements = list(replacements)
-    replacements.reverse()
+@method_for(Arglist)
+def min_int_size_partial_join(self):
+    """Minimum size when the multilined subarglist in tail position is not joined.
 
-    for reg, rplc in replacements:
-        if cxt.view.substr(reg) != rplc:
-            cxt.view.replace(edit, reg, rplc)
+    self must have a multilined subarglist in tail position.
+
+    :return: the size of joint self's row0 with the trailing subarglist's only row0
+    included (other rows not counted as they won't be joined up).
+
+    Example:
+        func(nested_func(1,2,3), nested_trailing(
+            hey(),
+            even_more()
+        ))
+
+        For 'func', return len('nested_func(1,2,3), nested_trailing(')
+    """
+    return (
+        len(self.args) - 1 +
+        sum(arg.min_size() for arg in self.args[:-1]) +
+        self.args[-1].min_size_partial_join()
+    )
 
 
-def mark_joinables_at(posns):
-    if cxt.ruler is None:
-        return
+@method_for(Arglist)
+def min_size_partial_join(self):
+    # add 1 for the opening "("
+    return self.min_int_size_partial_join() + 1
 
-    for arglist in all_innermost_enclosing_multilined(posns):
-        if arglist.is_joinable_to_1st_line():
-            arrow = '\u2191'
-            arrow_pos = rstrip_pos(cxt.view, arglist.begin)
-        elif arglist.is_joinable_to_next_line():
-            arrow = '\u2190'
-            arrow_pos = rstrip_pos(cxt.view, arglist.args[0].begin)
-        else:
+
+@method_for(Arg)
+def min_size_partial_join(self):
+    return (
+        sum(reg.size() for reg in self.regions_outside_arglists()) +
+        sum(arglist.min_size() for arglist in self.arglists[:-1]) +
+        rstrip_pos(cxt.view, self.arglists[-1].begin) - self.arglists[-1].begin
+    )
+
+
+@method_for(Arg)
+def has_multilined_arglist_in_tail_pos(self):
+    return (
+        self.arglists and
+        self.arglists[-1].end == self.end and
+        self.arglists[-1].is_multiliner()
+    )
+
+
+@method_for(Arglist)
+def has_multilined_sub_in_tail_pos(self):
+    return self.args and self.args[-1].has_multilined_arglist_in_tail_pos()
+
+
+def mark_all_joinables_at(posns):
+    for pos in posns:
+        res = what_to_join_at(pos)
+        if res is None:
             continue
+
+        E, row, full = res
+
+        if row == 0:
+            arrow = '\u2191' if full else '\u21e1'
+            arrow_pos = rstrip_pos(cxt.view, E.begin)
+        else:
+            row1 = row_at(cxt.view, E.begin) + 1
+            if substr_row_line(cxt.view, row1).strip():
+                arrow = '\u2190' if full else '\u21e0'
+                arrow_pos = row_rstrip_pos(cxt.view, row1)
+            else:
+                # row 1 is all spaces or empty, so don't show an arrow since it would look
+                # ugly
+                continue                
 
         cxt.view.add_phantom(
             'autosplit:joinable',
-            sublime.Region(arrow_pos),
+            Region(arrow_pos),
             arrow,
             sublime.LAYOUT_INLINE
         )
