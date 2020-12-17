@@ -81,8 +81,7 @@ def replacements_for_split_at(pos):
 
 @method_for(Arglist)
 def is_sub_splittable(self, sub):
-    arg = self.sub_arg(sub)
-    return arg.is_on_fresh_line() or self.args.index(arg) == len(self.args) - 1
+    return self.sub_arg(sub).is_on_fresh_line()
 
 
 @method_for(Arg)
@@ -310,7 +309,7 @@ def replacements_by_join_spec(join_spec):
 def what_to_join_at(pos):
     """Return None or (Arglist, row, full).
     
-    row is either 0 or 1; full is either False, True or None (not joinable).
+    row is either 0 or 1, full is either False or True.
     """
     E = parse_at(pos)
 
@@ -330,13 +329,16 @@ def what_to_join_at(pos):
     elif E.has_arg_starting_below_row1():
         return E.row1_join_spec()
     elif E.has_multilined_sub_in_tail_pos():
-        return E.full_to_1_or_partial_to_0_join_spec()
+        return E.full_to_row1_or_partial_to_row0_join_spec()
     else:
         return E.row0_join_spec()
 
 
 @method_for(Arglist)
 def row0_join_spec(self):
+    if cxt.ruler is None:
+        return self, 0, True
+
     col0 = self.join_col0()
     full = None
 
@@ -351,6 +353,9 @@ def row0_join_spec(self):
 
 @method_for(Arglist)
 def row1_join_spec(self):
+    if cxt.ruler is None:
+        return self, 1, True
+
     col1 = self.join_col1()
     full = None
 
@@ -364,7 +369,10 @@ def row1_join_spec(self):
 
 
 @method_for(Arglist)
-def full_to_1_or_partial_to_0_join_spec(self):
+def full_to_row1_or_partial_to_row0_join_spec(self):
+    if cxt.ruler is None:
+        return self, 1, True
+
     if self.join_col1() + self.min_int_size() <= cxt.ruler:
         return self, 1, True
     elif self.join_col0() + self.min_size_partial_join() <= cxt.ruler:

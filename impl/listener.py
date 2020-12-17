@@ -1,6 +1,7 @@
 import sublime_plugin
 
 from . import op
+from .edit import call_with_edit
 from .shared import cxt
 from .sublime_util import if_not_called_for
 from .sublime_util import line_too_long
@@ -28,7 +29,11 @@ class Listener(sublime_plugin.ViewEventListener):
                 return
 
             if any(line_too_long(self.view, reg.b, cxt.ruler) for reg in self.view.sel()):
-                self.view.run_command('autosplit_split_if_too_long')
+                def do_split(edit):
+                    op.erase_joinable_arrows()
+                    op.split_all_if_too_long(edit, [reg.b for reg in self.view.sel()])
+
+                call_with_edit(self.view, do_split)
 
     @if_not_called_for(300)
     def on_selection_modified(self):

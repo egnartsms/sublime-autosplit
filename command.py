@@ -1,6 +1,7 @@
 import sublime_plugin
 
 from .impl import op
+from .impl.edit import *
 from .impl.listener import *
 from .impl.shared import cxt
 
@@ -19,10 +20,10 @@ class AutosplitJoin(sublime_plugin.TextCommand):
             op.join_all_at(edit, [at] if at else [reg.b for reg in self.view.sel()])
 
 
-class AutosplitSplitIfTooLong(sublime_plugin.TextCommand):
-    def run(self, edit):
-        with cxt.working_on(self.view):
-            if cxt.ruler is None:
-                return
-            op.erase_joinable_arrows()
-            op.split_all_if_too_long(edit, [reg.b for reg in self.view.sel()])
+class AutosplitRunTests(sublime_plugin.WindowCommand):
+    def run(self):
+        import sys
+        sys.modules.pop('autosplit.impl.tests', None)
+        
+        from .impl.tests import run_tests
+        run_tests(self.window)

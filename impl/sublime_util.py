@@ -130,6 +130,15 @@ def retained_pos(view, pos):
         yield pos_accessor
 
 
+@contextmanager
+def retained_reg(view, reg):
+    with hidden_regions(view, [reg]) as accessor:
+        def pos_accessor():
+            return accessor()[0]
+
+        yield pos_accessor
+
+
 def relocating_posns(view, posns):
     if len(posns) <= 1:
         yield from posns
