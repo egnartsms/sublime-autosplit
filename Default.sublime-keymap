@@ -1,0 +1,10 @@
+[
+    {
+        "keys": ["alt+["],
+        "command": "autosplit_join"
+    },
+    {
+        "keys": ["alt+]"],
+        "command": "autosplit_split"
+    }
+]
