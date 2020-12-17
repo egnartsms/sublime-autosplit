@@ -14,7 +14,7 @@ class Context:
     @contextmanager
     def working_on(self, view):
         self.view = view
-        self.settings = sublime.load_settings('autosplit.sublime-settings')
+        self.settings = sublime.load_settings('AutoSplit.sublime-settings')
 
         try:
             [self.ruler] = view.settings().get('rulers')
