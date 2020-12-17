@@ -38,7 +38,7 @@ class Listener(sublime_plugin.ViewEventListener):
     @if_not_called_for(300)
     def on_selection_modified(self):
         with cxt.working_on(self.view):
-            if cxt.ruler is None:
-                return
             op.erase_joinable_arrows()
+            if cxt.ruler is None or not cxt.settings.get('show_arrows'):
+                return
             op.mark_all_joinables_at([reg.b for reg in cxt.view.sel()])

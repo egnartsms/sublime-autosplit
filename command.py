@@ -24,6 +24,9 @@ class AutosplitRunTests(sublime_plugin.WindowCommand):
     def run(self):
         import sys
         sys.modules.pop('autosplit.impl.tests', None)
-        
-        from .impl.tests import run_tests
-        run_tests(self.window)
+
+        try:
+            from .impl.tests import run_tests
+            run_tests(self.window)
+        finally:
+            sys.modules.pop('autosplit.impl.tests', None)
