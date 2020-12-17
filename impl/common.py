@@ -1,6 +1,3 @@
-from functools import update_wrapper
-
-
 def pairwise(itbl):
     it = iter(itbl)
     while True:

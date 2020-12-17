@@ -615,7 +615,6 @@ def run_tests(self, tests):
             passed += 1
         else:
             failed += 1
-            break
 
     def print_total():
         self.print("# ---- TOTAL -----\n")

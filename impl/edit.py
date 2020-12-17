@@ -1,3 +1,8 @@
+"""AutosplitThunk is a dummy command that just calls whatever thunk set to be called.
+
+This is needed when you need to edit a view but don't want to create a dedicated
+TextCommand for this.
+"""
 import sublime_plugin
 
 
