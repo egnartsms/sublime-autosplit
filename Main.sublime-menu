@@ -10,7 +10,7 @@
                     "caption": "Settings",
                     "command": "edit_settings",
                     "args": {
-                        "base_file": "${packages}/autosplit/autosplit.sublime-settings",
+                        "base_file": "${packages}/AutoSplit/AutoSplit.sublime-settings",
                         "default": "{\n$0\n}\n"
                     }
                 }

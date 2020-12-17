@@ -23,10 +23,10 @@ class AutosplitJoin(sublime_plugin.TextCommand):
 class AutosplitRunTests(sublime_plugin.WindowCommand):
     def run(self):
         import sys
-        sys.modules.pop('autosplit.impl.tests', None)
+        sys.modules.pop('AutoSplit.impl.tests', None)
 
         try:
             from .impl.tests import run_tests
             run_tests(self.window)
         finally:
-            sys.modules.pop('autosplit.impl.tests', None)
+            sys.modules.pop('AutoSplit.impl.tests', None)
