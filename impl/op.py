@@ -57,7 +57,7 @@ def has_arg_starting_below_row1(self):
 
 def split_all_at(edit, posns):
     for pos in relocating_posns(cxt.view, posns):
-        perform_replacements(edit, replacements_for_split_at(pos))   
+        perform_replacements(edit, replacements_for_split_at(pos))
 
 
 def replacements_for_split_at(pos):

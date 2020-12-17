@@ -149,12 +149,6 @@ def relocating_posns(view, posns):
             yield getregs()[i].b
 
 
-def relocating_regs(view, regs):
-    with hidden_regions(view, regs) as getregs:
-        for i in range(len(regs)):
-            yield getregs()[i]
-
-
 def redo_empty(view):
     cmd, args, repeat = view.command_history(1)
     return not cmd
