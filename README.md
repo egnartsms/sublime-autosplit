@@ -74,4 +74,27 @@ The last nested argument list can actually span multiple lines, whereas an initi
         )))
 ```
 
-We refer to such argument lists as "multiline tails" of their parents. In this example, `get_syntax` is a multiline tail of `window_new_file` call.  AutoSplit has special support for multiline tails.
+We refer to such argument lists as "multiline tails" of their parents. In this example, `get_syntax` is a multiline tail of `window_new_file` call.  AutoSplit has special support for multiline tails:
+
+* splitting an arglist with a multiline tail correctly adjusts indentation inside the tail
+
+    ```python
+        def new_file(self, flags=0, syntax=""):
+            """ flags must be either 0 or TRANSIENT """
+            return View(
+                sublime_api.window_new_file(
+                    self.window_id, flags, get_syntax(
+                        nested_call_1(arg1),
+                        nested_call_2(arg2),
+                        nested_call_3(arg3)
+                    )
+                )
+            )
+    ```
+    Accordingly, joining an arglist with a multilined tail dedents the tail back.
+
+* if it's only possible to join an arglist with a multiline tail, this is indicated with dashed up and left arrows:
+
+    ![typing animation](screen/split-join-dashed-arrow.gif)
+
+    In this example, it's not possible to fully join the arglist up to one line. But it's possible to join it partially, that is, leaving the multiline tail unjoined. Thich is indicated by the dashed arrows.
