@@ -29,11 +29,11 @@ AutoSplit assumes that function or method calls can be in 1 of 3 possible forms:
 AutoSplit provides for (semi-)automatic switching between these argument list forms. All of the command operate on the innermost arglist(s) the cursor(s) is(are) in.
 
 
-* Split (sample keybinding: `Alt+]`)
+* Split (suggested keybinding: `Alt+]`)
 
     Push args off the first line (the line of the opening `(`) to the next line. If already at the next line, split them across multiple lines (every arg on its own line).
 
-* Join (sample keybinding: `Alt+[`)
+* Join (suggested keybinding: `Alt+[`)
 
     Try to join all of the arguments to the next line. If all the arguments are already on the next line, then try to lift them up to the first line.
 
