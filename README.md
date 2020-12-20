@@ -1,8 +1,8 @@
 # AutoSplit
 
-AutoSplit is a Sublime Text 3 plugin for automatic splitting arguments across multiple lines and joining them back to 1 line, currently only for Python. Support for other languages is ahead.
+AutoSplit is a Sublime Text 3 plugin for automatic splitting arguments across multiple lines and joining them back to one line. Works currently only for Python. Support for other languages is ahead.
 
-AutoSplit assumes that Python function or method calls can be in 1 of 3 possible forms:
+AutoSplit assumes that function or method calls can be in 1 of 3 possible forms:
 
 * inline: all the arguments fit on the same line as the opening parenthesis `(`
     ```python
@@ -29,11 +29,11 @@ AutoSplit assumes that Python function or method calls can be in 1 of 3 possible
 AutoSplit provides for (semi-)automatic switching between these argument list forms. All of the command operate on the innermost arglist(s) the cursor(s) is(are) in.
 
 
-* Split (default keybinding: `Alt+]`)
+* Split (sample keybinding: `Alt+]`)
 
     Push args off the first line (the line of the opening `(`) to the next line. If already at the next line, split them across multiple lines (every arg on its own line).
 
-* Join (default keybinding: `Alt+[`)
+* Join (sample keybinding: `Alt+[`)
 
     Try to join all of the arguments to the next line. If all the arguments are already on the next line, then try to lift them up to the first line.
 
@@ -91,10 +91,15 @@ We refer to such argument lists as "multiline tails" of their parents. In this e
                 )
             )
     ```
-    Accordingly, joining an arglist with a multilined tail dedents the tail back.
+    Accordingly, joining an arglist with a multiline tail dedents the tail back.
 
 * if it's only possible to join an arglist with a multiline tail, this is indicated with dashed up and left arrows:
 
     ![typing animation](screen/split-join-dashed-arrow.gif)
 
     In this example, it's not possible to fully join the arglist up to one line. But it's possible to join it partially, that is, leaving the multiline tail unjoined. Thich is indicated by the dashed arrows.
+
+
+## Keybindings
+
+The 2 commands `autosplit_split` and `autosplit_join` is best to use with keybindings, such as `Alt+[` or `Alt+]` or any other you like. For suggested key bindings, please choose the `Preferences -> AutoSplit -> Example Key Bindings` menu.

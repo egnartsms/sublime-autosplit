@@ -1,0 +1,10 @@
+[
+    {
+        "caption": "Autosplit: Split argument list",
+        "command": "autosplit_split"
+    },
+    {
+        "caption": "Autosplit: Join argument list",
+        "command": "autosplit_join"
+    }
+]

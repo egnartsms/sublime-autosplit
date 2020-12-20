@@ -13,6 +13,13 @@
                         "base_file": "${packages}/AutoSplit/AutoSplit.sublime-settings",
                         "default": "{\n$0\n}\n"
                     }
+                },
+                {
+                    "caption": "Example Key Bindings",
+                    "command": "open_file",
+                    "args": {
+                        "file": "${packages}/AutoSplit/Example.sublime-keymap"
+                    }
                 }
             ]
         }]
